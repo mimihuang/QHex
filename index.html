@@ -107,8 +107,13 @@
   </div>
 
 <script>
-// You should add to your updateStatus() function in the script:
-// document.getElementById("turnReminder").textContent = `Now player ${player}'s turn`;
+function updateStatus() {
+  const player = turn % 2 === 0 ? "Red" : "Blue";
+  const message = `Now player ${player}'s turn`;
+  document.getElementById("status").textContent = message;
+  document.getElementById("turnReminder").textContent = message;
+  document.getElementById("currentBit").textContent = `Current coin bit (c_${turn}) = ${coinString[turn]}`;
+}
 </script>
 </body>
 </html>
