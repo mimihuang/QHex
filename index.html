@@ -67,6 +67,11 @@
       display: none;
     }
   </style>
+
+  <!-- ✅ Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
 </head>
 <body>
   <h1>Quantum Hex (11×11)</h1>
@@ -91,6 +96,20 @@
   </div>
 
   <script>
+    // ✅ Firebase Initialization
+    const firebaseConfig = {
+      apiKey: "AIzaSyCdQqslJWy7VvqFkGufza8cY_G-xCE0Vuw",
+      authDomain: "quantum-hex.firebaseapp.com",
+      databaseURL: "https://quantum-hex-default-rtdb.firebaseio.com",
+      projectId: "quantum-hex",
+      storageBucket: "quantum-hex.firebasestorage.app",
+      messagingSenderId: "947590339914",
+      appId: "1:947590339914:web:e033465cba45a73b0cb5b3",
+      measurementId: "G-PG1CGZV2GG"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
     const SIZE = 11;
     const EMPTY = ".";
     const Z = "Z", X = "X";
