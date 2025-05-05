@@ -66,14 +66,9 @@
       pointer-events: none;
       display: none;
     }
-    .turn-reminder {
-      margin-top: 12px;
-      font-size: 18px;
-      font-weight: bold;
-      color: #444;
-    }
   </style>
 
+  <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 </head>
@@ -91,7 +86,6 @@
   <div id="coinString" class="coin-string"></div>
   <div id="coinHint" style="font-family: monospace; white-space: pre-line; background: #eef; border-left: 4px solid #88f; padding: 8px; margin-top: 8px;"></div>
   <div id="status"></div>
-  <div class="turn-reminder" id="turnReminder"></div>
   <div id="currentBit" style="margin-top: 8px; font-weight: bold;"></div>
   <button onclick="restartGame()">🔁 Restart Game</button>
   <div id="popup" class="popup"></div>
@@ -107,13 +101,528 @@
   </div>
 
 <script>
-function updateStatus() {
-  const player = turn % 2 === 0 ? "Red" : "Blue";
-  const message = `Now player ${player}'s turn`;
-  document.getElementById("status").textContent = message;
-  document.getElementById("turnReminder").textContent = message;
-  document.getElementById("currentBit").textContent = `Current coin bit (c_${turn}) = ${coinString[turn]}`;
-}
+  const firebaseConfig = {
+    apiKey: "AIzaSyCdQqslJWy7VvqFkGufza8cY_G-xCE0Vuw",
+    authDomain: "quantum-hex.firebaseapp.com",
+    databaseURL: "https://quantum-hex-default-rtdb.firebaseio.com",
+    projectId: "quantum-hex",
+    storageBucket: "quantum-hex.appspot.com",
+    messagingSenderId: "947590339914",
+    appId: "1:947590339914:web:e033465cba45a73b0cb5b3",
+    measurementId: "G-PG1CGZV2GG"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  const SIZE = 11;
+  const EMPTY = ".", Z = "Z", X = "X";
+  let boardZ, boardX, lockedZ, lockedX, coinString, turn, winner;
+  let playerId = Math.random().toString(36).slice(2);
+  let roomId = "", gameMode = "local";
+
+  function setMode(mode) {
+    gameMode = mode;
+    if (mode === "online") {
+      document.getElementById("online-setup").style.display = "block";
+    } else {
+      document.getElementById("online-setup").style.display = "none";
+      initializeGame();
+    }
+  }
+
+  function joinRoom() {
+    roomId = document.getElementById("roomId").value.trim();
+    if (!roomId) return alert("Please enter a valid room ID.");
+    const ref = db.ref("games/" + roomId);
+    ref.once("value", snapshot => {
+      const data = snapshot.val();
+      if (data) {
+        boardZ = data.boardZ;
+        boardX = data.boardX;
+        lockedZ = data.lockedZ;
+        lockedX = data.lockedX;
+        coinString = data.coinString;
+        turn = data.turn;
+      } else {
+        boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+        boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+        lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+        lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+        coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
+        turn = 0;
+      }
+      winner = null;
+      saveGameState();
+      drawAllBoards();
+      updateStatus();
+      updateCoinHint();
+      listenForChanges();
+    });
+  }
+
+  function initializeGame() {
+    boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+    boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+    lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+    lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+    coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
+    turn = 0;
+    winner = null;
+    drawAllBoards();
+    updateStatus();
+    updateCoinHint();
+    document.getElementById("coinString").textContent = coinString;
+  }
+
+  function restartGame() {
+    if (gameMode === "online") {
+      initializeGame();
+      saveGameState();
+    } else {
+      initializeGame();
+    }
+  }
+
+  function drawAllBoards() {
+    drawHexBoard("zBoard", boardZ, Z);
+    drawHexBoard("xBoard", boardX, X);
+  }
+
+  function drawHexBoard(svgId, board, boardType) {
+    const svg = document.getElementById(svgId);
+    svg.innerHTML = "";
+    const hexSize = 20;
+    const hexW = Math.sqrt(3) * hexSize;
+    const hexH = 1.5 * hexSize;
+
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const cx = 60 + x * hexW + y * hexW / 2;
+        const cy = 60 + y * hexH;
+        const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        polygon.setAttribute("points", hexPoints(cx, cy, hexSize));
+        polygon.setAttribute("stroke", outerStroke(x, y));
+        polygon.setAttribute("stroke-width", outerStroke(x, y) !== "#555" ? "3" : "1.2");
+        polygon.setAttribute("fill",
+          board[y][x] === "0" || board[y][x] === "+" ? "#f88" :
+          board[y][x] === "1" || board[y][x] === "-" ? "#88f" : "#eee"
+        );
+        polygon.style.cursor = "pointer";
+        polygon.onclick = () => handleClick(boardType, x, y);
+        svg.appendChild(polygon);
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", cx);
+        text.setAttribute("y", cy + 5);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "14");
+        text.textContent = board[y][x] === EMPTY ? "" : board[y][x];
+        svg.appendChild(text);
+      }
+    }
+  }
+
+  function outerStroke(x, y) {
+    if (y === 0 || y === SIZE - 1) return "red";
+    if (x === 0 || x === SIZE - 1) return "blue";
+    return "#555";
+  }
+
+  function hexPoints(cx, cy, r) {
+    return Array.from({ length: 6 }, (_, i) => {
+      const angle = Math.PI / 3 * i;
+      return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
+    }).join(" ");
+  }
+
+  function handleClick(boardType, x, y) {
+    if (winner || (gameMode === "online" && (turn % 2 === 0 ? "R" : "B") !== getLocalPlayer())) return;
+    const fromBoard = boardType === Z ? boardZ : boardX;
+    const toBoard = boardType === Z ? boardX : boardZ;
+    const fromLock = boardType === Z ? lockedZ : lockedX;
+    const toLock = boardType === Z ? lockedX : lockedZ;
+    if (fromLock[y][x]) return;
+    const current = turn % 2 === 0 ? "R" : "B";
+    const c = coinString[turn];
+    const symbol = boardType === Z ? (current === "R" ? "0" : "1") : (current === "R" ? "+" : "-");
+    fromBoard[y][x] = symbol;
+    fromLock[y][x] = true;
+    if (!toLock[y][x]) {
+      toBoard[y][x] = syncValue(symbol, c);
+      toLock[y][x] = true;
+    }
+    turn++;
+    checkWin();
+    drawAllBoards();
+    updateStatus();
+    updateCoinHint();
+    if (gameMode === "online") saveGameState();
+  }
+
+  function syncValue(val, bit) {
+    const flip = bit === "1";
+    const map = { "0": flip ? "-" : "+", "1": flip ? "+" : "-", "+": flip ? "1" : "0", "-": flip ? "0" : "1" };
+    return map[val];
+  }
+
+  function updateStatus() {
+    const player = turn % 2 === 0 ? "Red" : "Blue";
+    document.getElementById("status").textContent = `Now player ${player}'s turn`;
+    document.getElementById("currentBit").textContent = `Current coin bit (c_${turn}) = ${coinString[turn]}`;
+  }
+
+  function updateCoinHint() {
+    const bits = coinString.slice(0, 20).split("");
+    const players = bits.map((_, i) => i % 2 === 0 ? "R" : "B");
+    const stones = bits.map((bit, i) => {
+      const p = i % 2 === 0 ? "R" : "B";
+      return bit === "0" ? p : (p === "R" ? "B" : "R");
+    });
+    let hint = "Public coin : " + bits.join(" ") + "\n";
+    hint += "Stone_Uplay   : " + players.join(" ") + "\n";
+    hint += "Stone_other : " + stones.join(" ");
+    document.getElementById("coinHint").textContent = hint;
+  }
+
+  function checkWin() {
+    const zRedWin = hasPath("0", boardZ, true);
+    const zBlueWin = hasPath("1", boardZ, false);
+    const xRedWin = hasPath("+", boardX, true);
+    const xBlueWin = hasPath("-", boardX, false);
+    if (zRedWin || xRedWin) {
+      winner = "Red";
+      document.getElementById("status").innerHTML = "<div class='winner'>Red wins!</div>";
+      showPopup("Player R wins!");
+    }
+    if (zBlueWin || xBlueWin) {
+      winner = "Blue";
+      document.getElementById("status").innerHTML = "<div class='winner'>Blue wins!</div>";
+      showPopup("Player B wins!");
+    }
+  }
+
+  function showPopup(message) {
+    const popup = document.getElementById("popup");
+    popup.textContent = message;
+    popup.style.display = "block";
+    popup.style.animation = "fadeInOut 2s ease-in-out";
+    setTimeout(() => { popup.style.display = "none"; }, 2000);
+  }
+
+  function hasPath(symbol, board, vertical) {
+    const visited = new Set();
+    const stack = [];
+    for (let i = 0; i < SIZE; i++) {
+      if (vertical && board[0][i] === symbol) stack.push([0, i]);
+      if (!vertical && board[i][0] === symbol) stack.push([i, 0]);
+    }
+    while (stack.length) {
+      const [x, y] = stack.pop();
+      const key = `${x},${y}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if ((vertical && x === SIZE - 1) || (!vertical && y === SIZE - 1)) return true;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < SIZE && ny < SIZE && board[nx][ny] === symbol) {
+          stack.push([nx, ny]);
+        }
+      }
+    }
+    return false;
+  }
+
+  function saveGameState() {
+    if (roomId) {
+      db.ref("games/" + roomId).set({
+        boardZ, boardX, lockedZ, lockedX, coinString, turn
+      });
+    }
+  }
+
+  function listenForChanges() {
+    db.ref("games/" + roomId).on("value", snapshot => {
+      const data = snapshot.val();
+      if (!data) return;
+      boardZ = data.boardZ;
+      boardX = data.boardX;
+      lockedZ = data.lockedZ;
+      lockedX = data.lockedX;
+      coinString = data.coinString;
+      turn = data.turn;
+      drawAllBoards();
+      updateStatus();
+      updateCoinHint();
+    });
+  }
+
+  function getLocalPlayer() {
+    return playerId < roomId ? "R" : "B"; // 簡單決定哪方是先手
+  }
+
+  initializeGame();
 </script>
 </body>
 </html>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyCdQqslJWy7VvqFkGufza8cY_G-xCE0Vuw",
+    authDomain: "quantum-hex.firebaseapp.com",
+    databaseURL: "https://quantum-hex-default-rtdb.firebaseio.com",
+    projectId: "quantum-hex",
+    storageBucket: "quantum-hex.appspot.com",
+    messagingSenderId: "947590339914",
+    appId: "1:947590339914:web:e033465cba45a73b0cb5b3",
+    measurementId: "G-PG1CGZV2GG"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  const SIZE = 11;
+  const EMPTY = ".", Z = "Z", X = "X";
+  let boardZ, boardX, lockedZ, lockedX, coinString, turn, winner;
+  let playerId = Math.random().toString(36).slice(2);
+  let roomId = "", gameMode = "local";
+
+  function setMode(mode) {
+    gameMode = mode;
+    if (mode === "online") {
+      document.getElementById("online-setup").style.display = "block";
+    } else {
+      document.getElementById("online-setup").style.display = "none";
+      initializeGame();
+    }
+  }
+
+  function joinRoom() {
+    roomId = document.getElementById("roomId").value.trim();
+    if (!roomId) return alert("Please enter a valid room ID.");
+    const ref = db.ref("games/" + roomId);
+    ref.once("value", snapshot => {
+      const data = snapshot.val();
+      if (data) {
+        boardZ = data.boardZ;
+        boardX = data.boardX;
+        lockedZ = data.lockedZ;
+        lockedX = data.lockedX;
+        coinString = data.coinString;
+        turn = data.turn;
+      } else {
+        boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+        boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+        lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+        lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+        coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
+        turn = 0;
+      }
+      winner = null;
+      saveGameState();
+      drawAllBoards();
+      updateStatus();
+      updateCoinHint();
+      listenForChanges();
+    });
+  }
+
+  function initializeGame() {
+    boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+    boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+    lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+    lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
+    coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
+    turn = 0;
+    winner = null;
+    drawAllBoards();
+    updateStatus();
+    updateCoinHint();
+    document.getElementById("coinString").textContent = coinString;
+  }
+
+  function restartGame() {
+    if (gameMode === "online") {
+      initializeGame();
+      saveGameState();
+    } else {
+      initializeGame();
+    }
+  }
+
+  function drawAllBoards() {
+    drawHexBoard("zBoard", boardZ, Z);
+    drawHexBoard("xBoard", boardX, X);
+  }
+
+  function drawHexBoard(svgId, board, boardType) {
+    const svg = document.getElementById(svgId);
+    svg.innerHTML = "";
+    const hexSize = 20;
+    const hexW = Math.sqrt(3) * hexSize;
+    const hexH = 1.5 * hexSize;
+
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const cx = 60 + x * hexW + y * hexW / 2;
+        const cy = 60 + y * hexH;
+        const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        polygon.setAttribute("points", hexPoints(cx, cy, hexSize));
+        polygon.setAttribute("stroke", outerStroke(x, y));
+        polygon.setAttribute("stroke-width", outerStroke(x, y) !== "#555" ? "3" : "1.2");
+        polygon.setAttribute("fill",
+          board[y][x] === "0" || board[y][x] === "+" ? "#f88" :
+          board[y][x] === "1" || board[y][x] === "-" ? "#88f" : "#eee"
+        );
+        polygon.style.cursor = "pointer";
+        polygon.onclick = () => handleClick(boardType, x, y);
+        svg.appendChild(polygon);
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", cx);
+        text.setAttribute("y", cy + 5);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("font-size", "14");
+        text.textContent = board[y][x] === EMPTY ? "" : board[y][x];
+        svg.appendChild(text);
+      }
+    }
+  }
+
+  function outerStroke(x, y) {
+    if (y === 0 || y === SIZE - 1) return "red";
+    if (x === 0 || x === SIZE - 1) return "blue";
+    return "#555";
+  }
+
+  function hexPoints(cx, cy, r) {
+    return Array.from({ length: 6 }, (_, i) => {
+      const angle = Math.PI / 3 * i;
+      return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
+    }).join(" ");
+  }
+
+  function handleClick(boardType, x, y) {
+    if (winner || (gameMode === "online" && (turn % 2 === 0 ? "R" : "B") !== getLocalPlayer())) return;
+    const fromBoard = boardType === Z ? boardZ : boardX;
+    const toBoard = boardType === Z ? boardX : boardZ;
+    const fromLock = boardType === Z ? lockedZ : lockedX;
+    const toLock = boardType === Z ? lockedX : lockedZ;
+    if (fromLock[y][x]) return;
+    const current = turn % 2 === 0 ? "R" : "B";
+    const c = coinString[turn];
+    const symbol = boardType === Z ? (current === "R" ? "0" : "1") : (current === "R" ? "+" : "-");
+    fromBoard[y][x] = symbol;
+    fromLock[y][x] = true;
+    if (!toLock[y][x]) {
+      toBoard[y][x] = syncValue(symbol, c);
+      toLock[y][x] = true;
+    }
+    turn++;
+    checkWin();
+    drawAllBoards();
+    updateStatus();
+    updateCoinHint();
+    if (gameMode === "online") saveGameState();
+  }
+
+  function syncValue(val, bit) {
+    const flip = bit === "1";
+    const map = { "0": flip ? "-" : "+", "1": flip ? "+" : "-", "+": flip ? "1" : "0", "-": flip ? "0" : "1" };
+    return map[val];
+  }
+
+  function updateStatus() {
+    const player = turn % 2 === 0 ? "Red" : "Blue";
+    document.getElementById("status").textContent = `Now player ${player}'s turn`;
+    document.getElementById("currentBit").textContent = `Current coin bit (c_${turn}) = ${coinString[turn]}`;
+  }
+
+  function updateCoinHint() {
+    const bits = coinString.slice(0, 20).split("");
+    const players = bits.map((_, i) => i % 2 === 0 ? "R" : "B");
+    const stones = bits.map((bit, i) => {
+      const p = i % 2 === 0 ? "R" : "B";
+      return bit === "0" ? p : (p === "R" ? "B" : "R");
+    });
+    let hint = "Public coin : " + bits.join(" ") + "\n";
+    hint += "Stone_Uplay   : " + players.join(" ") + "\n";
+    hint += "Stone_other : " + stones.join(" ");
+    document.getElementById("coinHint").textContent = hint;
+  }
+
+  function checkWin() {
+    const zRedWin = hasPath("0", boardZ, true);
+    const zBlueWin = hasPath("1", boardZ, false);
+    const xRedWin = hasPath("+", boardX, true);
+    const xBlueWin = hasPath("-", boardX, false);
+    if (zRedWin || xRedWin) {
+      winner = "Red";
+      document.getElementById("status").innerHTML = "<div class='winner'>Red wins!</div>";
+      showPopup("Player R wins!");
+    }
+    if (zBlueWin || xBlueWin) {
+      winner = "Blue";
+      document.getElementById("status").innerHTML = "<div class='winner'>Blue wins!</div>";
+      showPopup("Player B wins!");
+    }
+  }
+
+  function showPopup(message) {
+    const popup = document.getElementById("popup");
+    popup.textContent = message;
+    popup.style.display = "block";
+    popup.style.animation = "fadeInOut 2s ease-in-out";
+    setTimeout(() => { popup.style.display = "none"; }, 2000);
+  }
+
+  function hasPath(symbol, board, vertical) {
+    const visited = new Set();
+    const stack = [];
+    for (let i = 0; i < SIZE; i++) {
+      if (vertical && board[0][i] === symbol) stack.push([0, i]);
+      if (!vertical && board[i][0] === symbol) stack.push([i, 0]);
+    }
+    while (stack.length) {
+      const [x, y] = stack.pop();
+      const key = `${x},${y}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if ((vertical && x === SIZE - 1) || (!vertical && y === SIZE - 1)) return true;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < SIZE && ny < SIZE && board[nx][ny] === symbol) {
+          stack.push([nx, ny]);
+        }
+      }
+    }
+    return false;
+  }
+
+  function saveGameState() {
+    if (roomId) {
+      db.ref("games/" + roomId).set({
+        boardZ, boardX, lockedZ, lockedX, coinString, turn
+      });
+    }
+  }
+
+  function listenForChanges() {
+    db.ref("games/" + roomId).on("value", snapshot => {
+      const data = snapshot.val();
+      if (!data) return;
+      boardZ = data.boardZ;
+      boardX = data.boardX;
+      lockedZ = data.lockedZ;
+      lockedX = data.lockedX;
+      coinString = data.coinString;
+      turn = data.turn;
+      drawAllBoards();
+      updateStatus();
+      updateCoinHint();
+    });
+  }
+
+  function getLocalPlayer() {
+    return playerId < roomId ? "R" : "B"; // who goes first 
+  }
+
+  initializeGame();
