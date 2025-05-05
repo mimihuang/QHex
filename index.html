@@ -69,23 +69,6 @@
   </style>
 </head>
 <body>
-  <h2>Select Game Mode</h2>
-  <button onclick="setMode('local')">Local Mode</button>
-  <button onclick="setMode('online')">Online Mode</button>
-  <div id="online-setup" style="display:none; margin-top:10px;">
-    <input id="roomId" placeholder="Enter Room ID"/>
-    <button onclick="joinOnline()">Join Room</button>
-  </div>
-
-<!-- Firebase SDKs -->
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
-<script>
-  const firebaseConfig = {"apiKey": "AIzaSyCdQqslJWy7VvqFkGufza8cY_G-xCE0Vuw", "authDomain": "quantum-hex.firebaseapp.com", "databaseURL": "https://quantum-hex-default-rtdb.firebaseio.com", "projectId": "quantum-hex", "storageBucket": "quantum-hex.firebasestorage.app", "messagingSenderId": "947590339914", "appId": "1:947590339914:web:e033465cba45a73b0cb5b3", "measurementId": "G-PG1CGZV2GG"};
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.database();
-</script>
-
   <h1>Quantum Hex (11×11)</h1>
   <div><strong>Public Coin String:</strong></div>
   <div id="coinString" class="coin-string"></div>
@@ -128,90 +111,15 @@
     }
 
     function restartGame() {
-      
-    let gameMode = 'local';
-    let roomId = '';
-    function setMode(mode) {
-      gameMode = mode;
-      if (mode === 'online') {
-        document.getElementById('online-setup').style.display = 'block';
-      } else {
-        document.getElementById('online-setup').style.display = 'none';
-        initializeGame();
-      }
-    }
-
-    function joinOnline() {
-      roomId = document.getElementById('roomId').value.trim();
-      if (!roomId) return alert("Enter valid room ID");
-      const roomRef = db.ref("games/" + roomId);
-      roomRef.once('value', snapshot => {
-        const data = snapshot.val();
-        if (data) {
-          boardZ = data.boardZ;
-          boardX = data.boardX;
-          lockedZ = data.lockedZ;
-          lockedX = data.lockedX;
-          coinString = data.coinString;
-          turn = data.turn;
-        } else {
-          boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
-          boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
-          lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
-          lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
-          coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
-          turn = 0;
-        }
-        winner = null;
-        drawAllBoards();
-        updateStatus();
-        updateCoinHint();
-        document.getElementById("coinString").textContent = coinString;
-        document.getElementById("game-container").style.display = "block";
-        listenForChanges();
-        saveGameState();
-      });
-    }
-
-    function saveGameState() {
-      if (gameMode === 'online' && roomId) {
-        db.ref("games/" + roomId).set({
-          boardZ,
-          boardX,
-          lockedZ,
-          lockedX,
-          coinString,
-          turn
-        });
-      }
-    }
-
-    function listenForChanges() {
-      db.ref("games/" + roomId).on("value", snapshot => {
-        const data = snapshot.val();
-        if (!data) return;
-        boardZ = data.boardZ;
-        boardX = data.boardX;
-        lockedZ = data.lockedZ;
-        lockedX = data.lockedX;
-        coinString = data.coinString;
-        turn = data.turn;
-        drawAllBoards();
-        updateStatus();
-        updateCoinHint();
-      });
-    }
-
-    initializeGame();
-
+      initializeGame();
     }
 
     function drawAllBoards() {
-      drawHexBoard("zBoard", boardZ, Z);
-      drawHexBoard("xBoard", boardX, X);
+      drawHexBoard("zBoard", boardZ);
+      drawHexBoard("xBoard", boardX);
     }
 
-    function drawHexBoard(svgId, board, boardType) {
+    function drawHexBoard(svgId, board) {
       const svg = document.getElementById(svgId);
       svg.innerHTML = "";
       const hexSize = 20;
@@ -224,14 +132,14 @@
           const cy = 60 + y * hexH;
           const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
           polygon.setAttribute("points", hexPoints(cx, cy, hexSize));
-          polygon.setAttribute("stroke", outerStroke(x, y, boardType));
-          polygon.setAttribute("stroke-width", outerStroke(x, y, boardType) !== "#555" ? "3" : "1.2");
+          polygon.setAttribute("stroke", outerStroke(x, y));
+          polygon.setAttribute("stroke-width", outerStroke(x, y) !== "#555" ? "3" : "1.2");
           polygon.setAttribute("fill",
             board[y][x] === "0" || board[y][x] === "+" ? "#f88" :
             board[y][x] === "1" || board[y][x] === "-" ? "#88f" : "#eee"
           );
           polygon.style.cursor = "pointer";
-          polygon.onclick = () => handleClick(boardType, x, y);
+          polygon.onclick = () => handleClick(svgId === "zBoard" ? Z : X, x, y);
           svg.appendChild(polygon);
 
           const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -245,14 +153,9 @@
       }
     }
 
-    function outerStroke(x, y, boardType) {
-      if (boardType === Z) {
-        if (y === 0 || y === SIZE - 1) return "red";
-        if (x === 0 || x === SIZE - 1) return "blue";
-      } else {
-        if (x === 0 || x === SIZE - 1) return "red";
-        if (y === 0 || y === SIZE - 1) return "blue";
-      }
+    function outerStroke(x, y) {
+      if (y === 0 || y === SIZE - 1) return "red";
+      if (x === 0 || x === SIZE - 1) return "blue";
       return "#555";
     }
 
@@ -328,8 +231,8 @@
     function checkWin() {
       const zRedWin = hasPath("0", boardZ, true);
       const zBlueWin = hasPath("1", boardZ, false);
-      const xRedWin = hasPath("+", boardX, false);
-      const xBlueWin = hasPath("-", boardX, true);
+      const xRedWin = hasPath("+", boardX, true);
+      const xBlueWin = hasPath("-", boardX, false);
       if (zRedWin || xRedWin) {
         winner = "Red";
         document.getElementById("status").innerHTML = "<div class='winner'>Red wins!</div>";
@@ -375,82 +278,7 @@
       return false;
     }
 
-    
-    let gameMode = 'local';
-    let roomId = '';
-    function setMode(mode) {
-      gameMode = mode;
-      if (mode === 'online') {
-        document.getElementById('online-setup').style.display = 'block';
-      } else {
-        document.getElementById('online-setup').style.display = 'none';
-        initializeGame();
-      }
-    }
-
-    function joinOnline() {
-      roomId = document.getElementById('roomId').value.trim();
-      if (!roomId) return alert("Enter valid room ID");
-      const roomRef = db.ref("games/" + roomId);
-      roomRef.once('value', snapshot => {
-        const data = snapshot.val();
-        if (data) {
-          boardZ = data.boardZ;
-          boardX = data.boardX;
-          lockedZ = data.lockedZ;
-          lockedX = data.lockedX;
-          coinString = data.coinString;
-          turn = data.turn;
-        } else {
-          boardZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
-          boardX = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
-          lockedZ = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
-          lockedX = Array.from({ length: SIZE }, () => Array(SIZE).fill(false));
-          coinString = Array.from({ length: 300 }, () => Math.random() < 0.5 ? "0" : "1").join("");
-          turn = 0;
-        }
-        winner = null;
-        drawAllBoards();
-        updateStatus();
-        updateCoinHint();
-        document.getElementById("coinString").textContent = coinString;
-        document.getElementById("game-container").style.display = "block";
-        listenForChanges();
-        saveGameState();
-      });
-    }
-
-    function saveGameState() {
-      if (gameMode === 'online' && roomId) {
-        db.ref("games/" + roomId).set({
-          boardZ,
-          boardX,
-          lockedZ,
-          lockedX,
-          coinString,
-          turn
-        });
-      }
-    }
-
-    function listenForChanges() {
-      db.ref("games/" + roomId).on("value", snapshot => {
-        const data = snapshot.val();
-        if (!data) return;
-        boardZ = data.boardZ;
-        boardX = data.boardX;
-        lockedZ = data.lockedZ;
-        lockedX = data.lockedX;
-        coinString = data.coinString;
-        turn = data.turn;
-        drawAllBoards();
-        updateStatus();
-        updateCoinHint();
-      });
-    }
-
     initializeGame();
-
   </script>
 </body>
 </html>
